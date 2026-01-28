@@ -1,0 +1,97 @@
+name: Validar PR - Atividade HTML
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  validar-html:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Instalar dependências
+        run: npm install
+
+      - name: Executar testes
+        id: tests
+        run: |
+          npm test 2>&1 | tee test-output.txt
+          echo "TEST_EXIT_CODE=${PIPESTATUS[0]}" >> $GITHUB_ENV
+        continue-on-error: true
+
+      - name: Comentar resultado no PR (Falha)
+        if: env.TEST_EXIT_CODE != '0'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const output = fs.readFileSync('test-output.txt', 'utf8');
+
+            const body = `## ❌ Testes Falharam
+
+            Seu código não passou nas validações. Por favor, corrija os seguintes problemas:
+
+            \`\`\`
+            ${output}
+            \`\`\`
+
+            ### Requisitos:
+            - ✅ Adicionar apenas 1 arquivo .html na pasta \`respostas/\`
+            - ✅ O arquivo deve ter a estrutura básica HTML (\`<!DOCTYPE html>\`, \`<html>\`, \`<head>\`, \`<body>\`)
+            - ✅ Dentro do \`<body>\` deve conter pelo menos uma tag \`<h1>\` e uma tag \`<p>\`
+            - ✅ O HTML deve ser válido e bem formatado
+            `;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+
+      - name: Comentar resultado no PR (Sucesso)
+        if: env.TEST_EXIT_CODE == '0'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = `## ✅ Testes Aprovados!
+
+            Parabéns! Seu código passou em todas as validações. O merge será realizado automaticamente.
+            `;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+
+      - name: Auto-merge (se testes passaram)
+        if: env.TEST_EXIT_CODE == '0'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.pulls.merge({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+              merge_method: 'squash'
+            });
+
+      - name: Falhar o workflow se os testes falharam
+        if: env.TEST_EXIT_CODE != '0'
+        run: exit 1
